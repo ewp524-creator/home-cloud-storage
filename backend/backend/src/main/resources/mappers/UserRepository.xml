@@ -1,0 +1,101 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper
+    PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+    "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.filehome.user.UserRepository">
+    <resultMap id="userAccountMap" type="com.filehome.user.UserAccount">
+        <constructor>
+            <arg column="id" javaType="java.util.UUID"
+                 typeHandler="com.filehome.persistence.UuidTypeHandler"/>
+            <arg column="username" javaType="java.lang.String"/>
+            <arg column="email" javaType="java.lang.String"/>
+            <arg column="password_hash" javaType="java.lang.String"/>
+            <arg column="display_name" javaType="java.lang.String"/>
+            <arg column="avatar_url" javaType="java.lang.String"/>
+            <arg column="storage_quota_bytes" javaType="_long"/>
+            <arg column="is_enabled" javaType="_boolean"/>
+            <arg column="created_at" javaType="java.time.Instant"
+                 typeHandler="com.filehome.persistence.InstantTypeHandler"/>
+        </constructor>
+    </resultMap>
+
+    <sql id="userColumns">
+        id, username, email, password_hash, display_name, avatar_url,
+        storage_quota_bytes, is_enabled, created_at
+    </sql>
+
+    <select id="findById" resultMap="userAccountMap">
+        SELECT <include refid="userColumns"/>
+        FROM user_account
+        WHERE id = #{id}
+        LIMIT 1
+    </select>
+
+    <select id="findByIdForUpdate" resultMap="userAccountMap">
+        SELECT <include refid="userColumns"/>
+        FROM user_account
+        WHERE id = #{id}
+        LIMIT 1
+        FOR UPDATE
+    </select>
+
+    <select id="findByAccount" resultMap="userAccountMap">
+        SELECT <include refid="userColumns"/>
+        FROM user_account
+        WHERE username = #{account} OR email = #{account}
+        LIMIT 1
+    </select>
+
+    <select id="findByUsername" resultMap="userAccountMap">
+        SELECT <include refid="userColumns"/>
+        FROM user_account
+        WHERE username = #{username}
+        LIMIT 1
+    </select>
+
+    <select id="findByEmail" resultMap="userAccountMap">
+        SELECT <include refid="userColumns"/>
+        FROM user_account
+        WHERE email = #{email}
+        LIMIT 1
+    </select>
+
+    <insert id="insert">
+        INSERT INTO user_account (
+            id, username, email, password_hash, display_name,
+            avatar_url, storage_quota_bytes, is_enabled, created_at
+        ) VALUES (
+            #{account.id}, #{account.username}, #{account.email},
+            #{account.passwordHash}, #{account.displayName},
+            #{account.avatarUrl}, #{account.storageQuotaBytes},
+            #{account.enabled}, #{account.createdAt}
+        )
+    </insert>
+
+    <update id="updateAvatarUrl">
+        UPDATE user_account
+        SET avatar_url = #{avatarUrl}
+        WHERE id = #{id}
+    </update>
+
+    <update id="updateProfile">
+        UPDATE user_account
+        SET email = #{email},
+            display_name = #{displayName}
+        WHERE id = #{id}
+    </update>
+
+    <update id="updatePasswordHash">
+        UPDATE user_account
+        SET password_hash = #{passwordHash}
+        WHERE id = #{id}
+    </update>
+
+    <update id="deactivate">
+        UPDATE user_account
+        SET is_enabled = 0,
+            deactivated_at = CURRENT_TIMESTAMP(6)
+        WHERE id = #{id}
+    </update>
+</mapper>

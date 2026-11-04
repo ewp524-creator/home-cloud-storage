@@ -1,0 +1,16 @@
+.git
+.secrets
+.env
+.m2repo
+.tmp
+.redis-data
+backend/backend/target
+frontend/node_modules
+frontend/dist
+trueterminal/node_modules
+logs
+tools
+nginx
+database
+docs
+README.md

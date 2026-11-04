@@ -1,0 +1,115 @@
+server:
+  address: "${FILEHOME_SERVER_ADDRESS:127.0.0.1}"
+  port: "${FILEHOME_SERVER_PORT:8080}"
+  forward-headers-strategy: framework
+  tomcat:
+    threads:
+      max: "${FILEHOME_TOMCAT_MAX_THREADS:200}"
+      min-spare: "${FILEHOME_TOMCAT_MIN_SPARE_THREADS:24}"
+    accept-count: "${FILEHOME_TOMCAT_ACCEPT_COUNT:200}"
+    max-connections: "${FILEHOME_TOMCAT_MAX_CONNECTIONS:8192}"
+  error:
+    include-message: never
+    include-stacktrace: never
+
+spring:
+  application:
+    name: filehome-backend
+  data:
+    redis:
+      host: "${FILEHOME_REDIS_HOST:127.0.0.1}"
+      port: "${FILEHOME_REDIS_PORT:6379}"
+      password: "${FILEHOME_REDIS_PASSWORD:}"
+      timeout: 500ms
+      connect-timeout: 500ms
+  kafka:
+    bootstrap-servers: "${FILEHOME_KAFKA_BOOTSTRAP_SERVERS:127.0.0.1:9092}"
+    admin:
+      fail-fast: false
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      properties:
+        max.block.ms: 3000
+        request.timeout.ms: 3000
+        delivery.timeout.ms: 10000
+        enable.idempotence: true
+        acks: all
+        compression.type: lz4
+        linger.ms: 10
+        batch.size: 32768
+    consumer:
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+      properties:
+        spring.json.trusted.packages: com.filehome.activity
+        spring.json.value.default.type: com.filehome.activity.ActivityEvent
+    listener:
+      ack-mode: record
+  datasource:
+    url: "${FILEHOME_DB_URL:jdbc:mysql://127.0.0.1:3306/file_home?createDatabaseIfNotExist=true&useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&cachePrepStmts=true&prepStmtCacheSize=250&prepStmtCacheSqlLimit=2048&useServerPrepStmts=true&rewriteBatchedStatements=true&tcpKeepAlive=true}"
+    username: "${FILEHOME_DB_USERNAME:root}"
+    password: "${FILEHOME_DB_PASSWORD:}"
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      maximum-pool-size: "${FILEHOME_DB_POOL_SIZE:24}"
+      minimum-idle: "${FILEHOME_DB_MIN_IDLE:6}"
+      connection-timeout: 5000
+      idle-timeout: 600000
+      max-lifetime: 1800000
+      keepalive-time: 120000
+  sql:
+    init:
+      mode: always
+      schema-locations: classpath:db/schema.sql
+  servlet:
+    multipart:
+      max-file-size: 5GB
+      max-request-size: 5GB
+  jackson:
+    default-property-inclusion: non_null
+    time-zone: Asia/Shanghai
+
+mybatis:
+  mapper-locations: classpath:mappers/*.xml
+  configuration:
+    map-underscore-to-camel-case: true
+    jdbc-type-for-null: "NULL"
+
+app:
+  jwt:
+    secret: "${FILEHOME_JWT_SECRET:}"
+    access-token-minutes: "${FILEHOME_JWT_MINUTES:120}"
+  auth:
+    session-hours: "${FILEHOME_SESSION_HOURS:12}"
+    cookie-secure: "${FILEHOME_COOKIE_SECURE:false}"
+    session-cache-seconds: "${FILEHOME_SESSION_CACHE_SECONDS:60}"
+  upload:
+    part-size-bytes: "${FILEHOME_UPLOAD_PART_SIZE_BYTES:16777216}"
+    max-file-size-bytes: "${FILEHOME_UPLOAD_MAX_FILE_BYTES:21474836480}"
+    session-hours: "${FILEHOME_UPLOAD_SESSION_HOURS:48}"
+    max-active-sessions: "${FILEHOME_UPLOAD_MAX_ACTIVE_SESSIONS:4}"
+  storage:
+    endpoint: "${FILEHOME_MINIO_ENDPOINT:http://127.0.0.1:9000}"
+    console-url: "${FILEHOME_MINIO_CONSOLE_URL:http://127.0.0.1:9001}"
+    access-key: "${FILEHOME_MINIO_ACCESS_KEY:}"
+    secret-key: "${FILEHOME_MINIO_SECRET_KEY:}"
+    bucket: file-home
+    data-root: "${FILEHOME_STORAGE_DATA_ROOT:./data/storage}"
+  share:
+    base-url: "${FILEHOME_SHARE_BASE_URL:http://localhost}"
+    token-secret: "${FILEHOME_SHARE_TOKEN_SECRET:}"
+  cors:
+    allowed-origins:
+      - http://localhost
+      - http://localhost:5173
+      - http://127.0.0.1:5173
+  cache:
+    file-list-seconds: "${FILEHOME_FILE_LIST_CACHE_SECONDS:30}"
+    tree-seconds: "${FILEHOME_TREE_CACHE_SECONDS:60}"
+    details-seconds: "${FILEHOME_DETAILS_CACHE_SECONDS:30}"
+
+logging:
+  level:
+    com.filehome: INFO
+    com.filehome.persistence: WARN

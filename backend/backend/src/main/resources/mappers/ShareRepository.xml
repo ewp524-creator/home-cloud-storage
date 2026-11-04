@@ -1,0 +1,165 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper
+    PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+    "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.filehome.share.ShareRepository">
+    <resultMap id="shareLinkMap" type="com.filehome.share.ShareLink">
+        <constructor>
+            <arg column="id" javaType="java.util.UUID"
+                 typeHandler="com.filehome.persistence.UuidTypeHandler"/>
+            <arg column="owner_id" javaType="java.util.UUID"
+                 typeHandler="com.filehome.persistence.UuidTypeHandler"/>
+            <arg column="root_entry_id" javaType="java.util.UUID"
+                 typeHandler="com.filehome.persistence.UuidTypeHandler"/>
+            <arg column="token_hash" javaType="[B"/>
+            <arg column="access_code_hash" javaType="java.lang.String"/>
+            <arg column="access_code_encrypted" javaType="java.lang.String"/>
+            <arg column="permission" javaType="java.lang.String"/>
+            <arg column="is_recursive" javaType="_boolean"/>
+            <arg column="download_requires_auth" javaType="_boolean"/>
+            <arg column="expires_at" javaType="java.time.Instant"
+                 typeHandler="com.filehome.persistence.InstantTypeHandler"/>
+            <arg column="revoked_at" javaType="java.time.Instant"
+                 typeHandler="com.filehome.persistence.InstantTypeHandler"/>
+            <arg column="created_at" javaType="java.time.Instant"
+                 typeHandler="com.filehome.persistence.InstantTypeHandler"/>
+        </constructor>
+    </resultMap>
+
+    <resultMap id="shareAccessCountMap"
+               type="com.filehome.share.ShareAccessCount">
+        <constructor>
+            <arg column="share_id" javaType="java.util.UUID"
+                 typeHandler="com.filehome.persistence.UuidTypeHandler"/>
+            <arg column="visits" javaType="_long"/>
+            <arg column="downloads" javaType="_long"/>
+        </constructor>
+    </resultMap>
+
+    <sql id="shareColumns">
+        id, owner_id, root_entry_id, token_hash, access_code_hash,
+        access_code_encrypted,
+        permission, is_recursive, download_requires_auth,
+        expires_at, revoked_at, created_at
+    </sql>
+
+    <insert id="insert">
+        INSERT INTO share_link (
+            id, owner_id, root_entry_id, token_hash, access_code_hash,
+            access_code_encrypted,
+            permission, is_recursive, download_requires_auth,
+            expires_at, revoked_at, created_at
+        ) VALUES (
+            #{share.id}, #{share.ownerId}, #{share.rootEntryId},
+            #{share.tokenHash}, #{share.accessCodeHash},
+            #{share.accessCodeEncrypted},
+            #{share.permission}, #{share.recursive},
+            #{share.downloadRequiresAuth}, #{share.expiresAt},
+            #{share.revokedAt}, #{share.createdAt}
+        )
+    </insert>
+
+    <select id="findById" resultMap="shareLinkMap">
+        SELECT <include refid="shareColumns"/>
+        FROM share_link
+        WHERE owner_id = #{ownerId} AND id = #{id}
+        LIMIT 1
+    </select>
+
+    <select id="findByTokenHash" resultMap="shareLinkMap">
+        SELECT <include refid="shareColumns"/>
+        FROM share_link
+        WHERE token_hash = #{tokenHash}
+        LIMIT 1
+    </select>
+
+    <select id="findByOwnerAndRoot" resultMap="shareLinkMap">
+        SELECT <include refid="shareColumns"/>
+        FROM share_link
+        WHERE owner_id = #{ownerId}
+          AND root_entry_id = #{rootEntryId}
+        LIMIT 1
+    </select>
+
+    <select id="findAllByOwner" resultMap="shareLinkMap">
+        SELECT <include refid="shareColumns"/>
+        FROM share_link
+        WHERE owner_id = #{ownerId}
+        ORDER BY created_at DESC
+    </select>
+
+    <select id="findActiveByOwner" resultMap="shareLinkMap">
+        SELECT <include refid="shareColumns"/>
+        FROM share_link
+        WHERE owner_id = #{ownerId}
+          AND revoked_at IS NULL
+          AND expires_at > CURRENT_TIMESTAMP(6)
+        ORDER BY created_at DESC
+    </select>
+
+    <select id="findActiveSharedRootIds" resultType="java.util.UUID">
+        SELECT DISTINCT root_entry_id
+        FROM share_link
+        WHERE owner_id = #{ownerId}
+          AND revoked_at IS NULL
+          AND expires_at > CURRENT_TIMESTAMP(6)
+          AND root_entry_id IN
+        <foreach collection="entryIds" item="entryId"
+                 open="(" separator="," close=")">
+            #{entryId}
+        </foreach>
+    </select>
+
+    <update id="updateShare">
+        UPDATE share_link
+        SET access_code_hash = #{share.accessCodeHash},
+            access_code_encrypted = #{share.accessCodeEncrypted},
+            permission = #{share.permission},
+            is_recursive = #{share.recursive},
+            download_requires_auth = #{share.downloadRequiresAuth},
+            expires_at = #{share.expiresAt},
+            revoked_at = NULL
+        WHERE owner_id = #{share.ownerId}
+          AND root_entry_id = #{share.rootEntryId}
+    </update>
+
+    <update id="revoke">
+        UPDATE share_link
+        SET revoked_at = CURRENT_TIMESTAMP(6)
+        WHERE owner_id = #{ownerId} AND id = #{id}
+    </update>
+
+    <insert id="log">
+        INSERT INTO share_access_log (
+            share_id, viewer_user_id, access_action, succeeded
+        ) VALUES (
+            #{shareId}, #{viewerUserId}, #{action}, #{succeeded}
+        )
+    </insert>
+
+    <select id="count" resultType="long">
+        SELECT COUNT(*)
+        FROM share_access_log
+        WHERE share_id = #{shareId}
+          AND access_action = #{action}
+        <if test="onlySucceeded">
+          AND succeeded = 1
+        </if>
+    </select>
+
+    <select id="findAccessCounts" resultMap="shareAccessCountMap">
+        SELECT
+          s.id AS share_id,
+          COALESCE(SUM(
+            l.access_action = 'VIEW' AND l.succeeded = 1
+          ), 0) AS visits,
+          COALESCE(SUM(
+            l.access_action = 'DOWNLOAD' AND l.succeeded = 1
+          ), 0) AS downloads
+        FROM share_link s
+        LEFT JOIN share_access_log l ON l.share_id = s.id
+        WHERE s.owner_id = #{ownerId}
+        GROUP BY s.id
+    </select>
+</mapper>

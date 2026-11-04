@@ -1,0 +1,178 @@
+services:
+  mysql:
+    image: mysql:8.0
+    restart: unless-stopped
+    environment:
+      TZ: Asia/Shanghai
+      MYSQL_DATABASE: ${FILEHOME_DB_NAME:-file_home}
+      MYSQL_USER: ${FILEHOME_DB_USERNAME:-filehome}
+      MYSQL_PASSWORD: ${FILEHOME_DB_PASSWORD:?set FILEHOME_DB_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${FILEHOME_DB_ROOT_PASSWORD:?set FILEHOME_DB_ROOT_PASSWORD}
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_0900_ai_ci
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$${MYSQL_ROOT_PASSWORD} --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    networks:
+      - filehome
+
+  redis:
+    image: redis:8-alpine
+    restart: unless-stopped
+    environment:
+      REDISCLI_AUTH: ${FILEHOME_REDIS_PASSWORD:?set FILEHOME_REDIS_PASSWORD}
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --requirepass
+      - ${FILEHOME_REDIS_PASSWORD:?set FILEHOME_REDIS_PASSWORD}
+      - --maxmemory
+      - 256mb
+      - --maxmemory-policy
+      - allkeys-lru
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks:
+      - filehome
+
+  kafka:
+    image: ${FILEHOME_KAFKA_IMAGE:-apache/kafka:4.1.2}
+    restart: unless-stopped
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server 127.0.0.1:9092 --list >/dev/null"]
+      interval: 10s
+      timeout: 10s
+      retries: 20
+    networks:
+      - filehome
+
+  minio:
+    image: ${FILEHOME_MINIO_IMAGE:-minio/minio:latest}
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: ${FILEHOME_MINIO_ACCESS_KEY:?set FILEHOME_MINIO_ACCESS_KEY}
+      MINIO_ROOT_PASSWORD: ${FILEHOME_MINIO_SECRET_KEY:?set FILEHOME_MINIO_SECRET_KEY}
+    command: server /data --console-address :9001
+    volumes:
+      - minio_data:/data
+    ports:
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:9000/minio/health/live >/dev/null"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    networks:
+      - filehome
+
+  backend:
+    build:
+      context: ./backend/backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    init: true
+    environment:
+      TZ: Asia/Shanghai
+      FILEHOME_SERVER_ADDRESS: 0.0.0.0
+      FILEHOME_SERVER_PORT: 8080
+      FILEHOME_DB_URL: jdbc:mysql://mysql:3306/${FILEHOME_DB_NAME:-file_home}?createDatabaseIfNotExist=true&useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&cachePrepStmts=true&prepStmtCacheSize=250&prepStmtCacheSqlLimit=2048&useServerPrepStmts=true&rewriteBatchedStatements=true&tcpKeepAlive=true
+      FILEHOME_DB_USERNAME: ${FILEHOME_DB_USERNAME:-filehome}
+      FILEHOME_DB_PASSWORD: ${FILEHOME_DB_PASSWORD:?set FILEHOME_DB_PASSWORD}
+      FILEHOME_DB_POOL_SIZE: ${FILEHOME_DB_POOL_SIZE:-24}
+      FILEHOME_DB_MIN_IDLE: ${FILEHOME_DB_MIN_IDLE:-6}
+      FILEHOME_REDIS_HOST: redis
+      FILEHOME_REDIS_PORT: 6379
+      FILEHOME_REDIS_PASSWORD: ${FILEHOME_REDIS_PASSWORD:?set FILEHOME_REDIS_PASSWORD}
+      FILEHOME_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      FILEHOME_MINIO_ENDPOINT: http://minio:9000
+      FILEHOME_MINIO_CONSOLE_URL: ${FILEHOME_MINIO_CONSOLE_URL:-http://localhost:9001}
+      FILEHOME_MINIO_ACCESS_KEY: ${FILEHOME_MINIO_ACCESS_KEY:?set FILEHOME_MINIO_ACCESS_KEY}
+      FILEHOME_MINIO_SECRET_KEY: ${FILEHOME_MINIO_SECRET_KEY:?set FILEHOME_MINIO_SECRET_KEY}
+      FILEHOME_JWT_SECRET: ${FILEHOME_JWT_SECRET:?set FILEHOME_JWT_SECRET}
+      FILEHOME_JWT_MINUTES: ${FILEHOME_JWT_MINUTES:-120}
+      FILEHOME_SESSION_HOURS: ${FILEHOME_SESSION_HOURS:-12}
+      FILEHOME_COOKIE_SECURE: ${FILEHOME_COOKIE_SECURE:-false}
+      FILEHOME_SESSION_CACHE_SECONDS: ${FILEHOME_SESSION_CACHE_SECONDS:-60}
+      FILEHOME_UPLOAD_PART_SIZE_BYTES: ${FILEHOME_UPLOAD_PART_SIZE_BYTES:-16777216}
+      FILEHOME_UPLOAD_MAX_FILE_BYTES: ${FILEHOME_UPLOAD_MAX_FILE_BYTES:-21474836480}
+      FILEHOME_UPLOAD_SESSION_HOURS: ${FILEHOME_UPLOAD_SESSION_HOURS:-48}
+      FILEHOME_UPLOAD_MAX_ACTIVE_SESSIONS: ${FILEHOME_UPLOAD_MAX_ACTIVE_SESSIONS:-4}
+      FILEHOME_SHARE_TOKEN_SECRET: ${FILEHOME_SHARE_TOKEN_SECRET:?set FILEHOME_SHARE_TOKEN_SECRET}
+      FILEHOME_SHARE_BASE_URL: ${FILEHOME_SHARE_BASE_URL:-http://localhost}
+      FILEHOME_TOMCAT_MAX_THREADS: ${FILEHOME_TOMCAT_MAX_THREADS:-200}
+      FILEHOME_TOMCAT_MIN_SPARE_THREADS: ${FILEHOME_TOMCAT_MIN_SPARE_THREADS:-24}
+      FILEHOME_TOMCAT_ACCEPT_COUNT: ${FILEHOME_TOMCAT_ACCEPT_COUNT:-200}
+      FILEHOME_TOMCAT_MAX_CONNECTIONS: ${FILEHOME_TOMCAT_MAX_CONNECTIONS:-8192}
+    volumes:
+      - backend_logs:/app/logs
+    ports:
+      - "127.0.0.1:8080:8080"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/api/v1/health >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+    networks:
+      - filehome
+
+  web:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${FILEHOME_HTTP_PORT:-80}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - filehome
+
+networks:
+  filehome:
+    driver: bridge
+
+volumes:
+  mysql_data:
+  redis_data:
+  kafka_data:
+  minio_data:
+  backend_logs:

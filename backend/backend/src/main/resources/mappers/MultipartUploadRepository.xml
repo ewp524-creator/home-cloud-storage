@@ -1,0 +1,184 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper
+    PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+    "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.filehome.upload.MultipartUploadRepository">
+    <resultMap id="sessionMap"
+               type="com.filehome.upload.MultipartUploadSession">
+        <constructor>
+            <arg column="id" javaType="java.util.UUID"
+                 typeHandler="com.filehome.persistence.UuidTypeHandler"/>
+            <arg column="owner_id" javaType="java.util.UUID"
+                 typeHandler="com.filehome.persistence.UuidTypeHandler"/>
+            <arg column="target_entry_id" javaType="java.util.UUID"
+                 typeHandler="com.filehome.persistence.UuidTypeHandler"/>
+            <arg column="parent_id" javaType="java.util.UUID"
+                 typeHandler="com.filehome.persistence.UuidTypeHandler"/>
+            <arg column="file_name" javaType="java.lang.String"/>
+            <arg column="mime_type" javaType="java.lang.String"/>
+            <arg column="client_fingerprint" javaType="java.lang.String"/>
+            <arg column="size_bytes" javaType="_long"/>
+            <arg column="part_size_bytes" javaType="_long"/>
+            <arg column="total_parts" javaType="_int"/>
+            <arg column="storage_bucket" javaType="java.lang.String"/>
+            <arg column="storage_object_key" javaType="java.lang.String"/>
+            <arg column="minio_upload_id" javaType="java.lang.String"/>
+            <arg column="status"
+                 javaType="com.filehome.upload.MultipartUploadStatus"/>
+            <arg column="created_at" javaType="java.time.Instant"
+                 typeHandler="com.filehome.persistence.InstantTypeHandler"/>
+            <arg column="updated_at" javaType="java.time.Instant"
+                 typeHandler="com.filehome.persistence.InstantTypeHandler"/>
+            <arg column="expires_at" javaType="java.time.Instant"
+                 typeHandler="com.filehome.persistence.InstantTypeHandler"/>
+        </constructor>
+    </resultMap>
+
+    <resultMap id="partMap"
+               type="com.filehome.upload.MultipartUploadPart">
+        <constructor>
+            <arg column="upload_session_id" javaType="java.util.UUID"
+                 typeHandler="com.filehome.persistence.UuidTypeHandler"/>
+            <arg column="part_number" javaType="_int"/>
+            <arg column="etag" javaType="java.lang.String"/>
+            <arg column="sha256" javaType="_byte[]"/>
+            <arg column="size_bytes" javaType="_long"/>
+            <arg column="uploaded_at" javaType="java.time.Instant"
+                 typeHandler="com.filehome.persistence.InstantTypeHandler"/>
+        </constructor>
+    </resultMap>
+
+    <sql id="sessionColumns">
+        id, owner_id, target_entry_id, parent_id, file_name, mime_type,
+        client_fingerprint, size_bytes, part_size_bytes, total_parts,
+        storage_bucket, storage_object_key, minio_upload_id, status,
+        created_at, updated_at, expires_at
+    </sql>
+
+    <insert id="insert">
+        INSERT INTO upload_session (
+            id, owner_id, target_entry_id, parent_id, file_name, mime_type,
+            client_fingerprint, size_bytes, part_size_bytes, total_parts,
+            storage_bucket, storage_object_key, minio_upload_id, status,
+            created_at, updated_at, expires_at
+        ) VALUES (
+            #{session.id}, #{session.ownerId}, #{session.targetEntryId},
+            #{session.parentId}, #{session.fileName}, #{session.mimeType},
+            #{session.clientFingerprint}, #{session.sizeBytes},
+            #{session.partSizeBytes}, #{session.totalParts},
+            #{session.storageBucket}, #{session.storageObjectKey},
+            #{session.minioUploadId}, #{session.status},
+            #{session.createdAt}, #{session.updatedAt}, #{session.expiresAt}
+        )
+    </insert>
+
+    <select id="findByIdAndOwner" resultMap="sessionMap">
+        SELECT <include refid="sessionColumns"/>
+        FROM upload_session
+        WHERE id = #{id}
+          AND owner_id = #{ownerId}
+        LIMIT 1
+    </select>
+
+    <select id="findByIdAndOwnerForUpdate" resultMap="sessionMap">
+        SELECT <include refid="sessionColumns"/>
+        FROM upload_session
+        WHERE id = #{id}
+          AND owner_id = #{ownerId}
+        LIMIT 1
+        FOR UPDATE
+    </select>
+
+    <select id="findActiveByOwner" resultMap="sessionMap">
+        SELECT <include refid="sessionColumns"/>
+        FROM upload_session
+        WHERE owner_id = #{ownerId}
+          AND status IN ('INITIATED', 'UPLOADING', 'COMPLETING')
+          AND expires_at > CURRENT_TIMESTAMP(6)
+        ORDER BY updated_at DESC
+        LIMIT 20
+    </select>
+
+    <select id="countActiveByOwner" resultType="int">
+        SELECT COUNT(*)
+        FROM upload_session
+        WHERE owner_id = #{ownerId}
+          AND status IN ('INITIATED', 'UPLOADING', 'COMPLETING')
+          AND expires_at > CURRENT_TIMESTAMP(6)
+    </select>
+
+    <select id="sumReservedBytes" resultType="long">
+        SELECT COALESCE(SUM(size_bytes), 0)
+        FROM upload_session
+        WHERE owner_id = #{ownerId}
+          AND status IN ('INITIATED', 'UPLOADING', 'COMPLETING')
+          AND expires_at > CURRENT_TIMESTAMP(6)
+    </select>
+
+    <insert id="upsertPart">
+        INSERT INTO upload_part (
+            upload_session_id, part_number, etag, sha256, size_bytes
+        ) VALUES (
+            #{part.uploadSessionId}, #{part.partNumber}, #{part.etag},
+            #{part.sha256}, #{part.sizeBytes}
+        )
+        ON DUPLICATE KEY UPDATE
+            etag = VALUES(etag),
+            sha256 = VALUES(sha256),
+            size_bytes = VALUES(size_bytes),
+            uploaded_at = CURRENT_TIMESTAMP(6)
+    </insert>
+
+    <select id="findParts" resultMap="partMap">
+        SELECT upload_session_id, part_number, etag, sha256, size_bytes,
+               uploaded_at
+        FROM upload_part
+        WHERE upload_session_id = #{sessionId}
+        ORDER BY part_number
+    </select>
+
+    <update id="markUploading">
+        UPDATE upload_session
+        SET status = 'UPLOADING'
+        WHERE id = #{id}
+          AND status IN ('INITIATED', 'UPLOADING')
+    </update>
+
+    <update id="markCompleting">
+        UPDATE upload_session
+        SET status = 'COMPLETING'
+        WHERE id = #{id}
+          AND status IN ('INITIATED', 'UPLOADING', 'COMPLETING')
+    </update>
+
+    <update id="markCompleted">
+        UPDATE upload_session
+        SET status = 'COMPLETED'
+        WHERE id = #{id}
+          AND status IN ('COMPLETING', 'COMPLETED')
+    </update>
+
+    <update id="markAborted">
+        UPDATE upload_session
+        SET status = 'ABORTED'
+        WHERE id = #{id}
+          AND status IN ('INITIATED', 'UPLOADING', 'COMPLETING')
+    </update>
+
+    <select id="findExpired" resultMap="sessionMap">
+        SELECT <include refid="sessionColumns"/>
+        FROM upload_session
+        WHERE status IN ('INITIATED', 'UPLOADING')
+          AND expires_at &lt;= CURRENT_TIMESTAMP(6)
+        ORDER BY expires_at
+        LIMIT #{limit}
+    </select>
+
+    <delete id="deleteTerminalBefore">
+        DELETE FROM upload_session
+        WHERE status IN ('COMPLETED', 'ABORTED')
+          AND updated_at &lt; DATE_SUB(CURRENT_TIMESTAMP(6), INTERVAL 7 DAY)
+        LIMIT 1000
+    </delete>
+</mapper>

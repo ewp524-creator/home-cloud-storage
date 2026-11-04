@@ -1,0 +1,388 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper
+    PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+    "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.filehome.file.FileRepository">
+    <resultMap id="fileEntryMap" type="com.filehome.file.FileEntry">
+        <constructor>
+            <arg column="id" javaType="java.util.UUID"
+                 typeHandler="com.filehome.persistence.UuidTypeHandler"/>
+            <arg column="owner_id" javaType="java.util.UUID"
+                 typeHandler="com.filehome.persistence.UuidTypeHandler"/>
+            <arg column="parent_id" javaType="java.util.UUID"
+                 typeHandler="com.filehome.persistence.UuidTypeHandler"/>
+            <arg column="kind" javaType="com.filehome.file.FileEntry$EntryKind"/>
+            <arg column="name" javaType="java.lang.String"/>
+            <arg column="created_at" javaType="java.time.Instant"
+                 typeHandler="com.filehome.persistence.InstantTypeHandler"/>
+            <arg column="updated_at" javaType="java.time.Instant"
+                 typeHandler="com.filehome.persistence.InstantTypeHandler"/>
+            <arg column="deleted_at" javaType="java.time.Instant"
+                 typeHandler="com.filehome.persistence.InstantTypeHandler"/>
+            <arg column="bucket" javaType="java.lang.String"/>
+            <arg column="object_key" javaType="java.lang.String"/>
+            <arg column="size_bytes" javaType="_long"/>
+            <arg column="mime_type" javaType="java.lang.String"/>
+            <arg column="starred" javaType="_boolean"/>
+            <arg column="tags_json" javaType="java.util.List"
+                 typeHandler="com.filehome.persistence.JsonStringListTypeHandler"/>
+            <arg column="shared" javaType="_boolean"/>
+        </constructor>
+    </resultMap>
+
+    <resultMap id="fileChildCountMap" type="com.filehome.file.FileChildCount">
+        <constructor>
+            <arg column="parent_id" javaType="java.util.UUID"
+                 typeHandler="com.filehome.persistence.UuidTypeHandler"/>
+            <arg column="item_count" javaType="_long"/>
+        </constructor>
+    </resultMap>
+
+    <resultMap id="fileStorageStatsMap" type="com.filehome.file.FileStorageStats">
+        <constructor>
+            <arg column="used_bytes" javaType="_long"/>
+            <arg column="file_count" javaType="_long"/>
+            <arg column="folder_count" javaType="_long"/>
+        </constructor>
+    </resultMap>
+
+    <sql id="entryColumns">
+        e.id,
+        e.owner_id,
+        e.parent_id,
+        e.entry_kind AS kind,
+        e.name,
+        e.created_at,
+        e.updated_at,
+        e.deleted_at,
+        o.storage_bucket AS bucket,
+        o.storage_object_key AS object_key,
+        COALESCE(o.size_bytes, 0) AS size_bytes,
+        o.mime_type,
+        COALESCE(s.is_starred, 0) AS starred,
+        COALESCE(tags.tags_json, '[]') AS tags_json,
+        0 AS shared
+    </sql>
+
+    <sql id="entryJoins">
+        LEFT JOIN file_object o ON o.entry_id = e.id
+        LEFT JOIN user_file_state s
+          ON s.entry_id = e.id AND s.user_id = e.owner_id
+        LEFT JOIN (
+            SELECT ft.entry_id,
+                   CONCAT(
+                       '[',
+                       GROUP_CONCAT(JSON_QUOTE(t.name) ORDER BY t.name SEPARATOR ','),
+                       ']'
+                   ) AS tags_json
+            FROM file_tag ft
+            JOIN tag t ON t.id = ft.tag_id
+            JOIN file_entry tagged_entry ON tagged_entry.id = ft.entry_id
+            WHERE tagged_entry.owner_id = #{ownerId}
+            GROUP BY ft.entry_id
+        ) tags ON tags.entry_id = e.id
+    </sql>
+
+    <select id="findRoot" resultMap="fileEntryMap">
+        SELECT <include refid="entryColumns"/>
+        FROM file_entry e
+        <include refid="entryJoins"/>
+        WHERE e.owner_id = #{ownerId}
+          AND e.parent_id IS NULL
+          AND e.entry_kind = 'FOLDER'
+          AND e.deleted_at IS NULL
+        LIMIT 1
+    </select>
+
+    <select id="findById" resultMap="fileEntryMap">
+        SELECT <include refid="entryColumns"/>
+        FROM file_entry e
+        <include refid="entryJoins"/>
+        WHERE e.owner_id = #{ownerId} AND e.id = #{id}
+        LIMIT 1
+    </select>
+
+    <select id="findAll" resultMap="fileEntryMap">
+        SELECT <include refid="entryColumns"/>
+        FROM file_entry e
+        <include refid="entryJoins"/>
+        WHERE e.owner_id = #{ownerId}
+        <if test="!includeDeleted">
+          AND e.deleted_at IS NULL
+        </if>
+        ORDER BY e.created_at
+    </select>
+
+    <select id="findPage" resultMap="fileEntryMap">
+        SELECT <include refid="entryColumns"/>
+        FROM file_entry e
+        <include refid="entryJoins"/>
+        WHERE e.owner_id = #{query.ownerId}
+          AND e.parent_id = #{query.parentId}
+        <if test="!query.includeDeleted">
+          AND e.deleted_at IS NULL
+        </if>
+        <if test="query.query != null and query.query != ''">
+          AND (
+            e.name LIKE CONCAT('%', #{query.query}, '%')
+            OR EXISTS (
+              SELECT 1
+              FROM file_tag search_ft
+              JOIN tag search_tag ON search_tag.id = search_ft.tag_id
+              WHERE search_ft.entry_id = e.id
+                AND search_tag.name LIKE CONCAT('%', #{query.query}, '%')
+            )
+          )
+        </if>
+        <if test="query.tag != null and query.tag != ''">
+          AND EXISTS (
+            SELECT 1
+            FROM file_tag filter_ft
+            JOIN tag filter_tag ON filter_tag.id = filter_ft.tag_id
+            WHERE filter_ft.entry_id = e.id
+              AND filter_tag.name = #{query.tag}
+          )
+        </if>
+        <if test="query.type == 'folder'">
+          AND e.entry_kind = 'FOLDER'
+        </if>
+        <if test="query.type == 'document'">
+          AND e.entry_kind = 'FILE'
+          AND LOWER(SUBSTRING_INDEX(e.name, '.', -1)) IN (
+            'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx',
+            'pdf', 'txt', 'md', 'ofd'
+          )
+        </if>
+        <if test="query.type == 'media'">
+          AND e.entry_kind = 'FILE'
+          AND LOWER(SUBSTRING_INDEX(e.name, '.', -1)) IN (
+            'png', 'jpg', 'jpeg', 'webp', 'gif',
+            'mp4', 'mov', 'mp3', 'wav', 'm4a'
+          )
+        </if>
+        <if test="query.type == 'code'">
+          AND e.entry_kind = 'FILE'
+          AND LOWER(SUBSTRING_INDEX(e.name, '.', -1)) IN (
+            'js', 'ts', 'vue', 'java', 'py', 'go', 'rs',
+            'c', 'cpp', 'html', 'css', 'json', 'yaml', 'yml',
+            'xml', 'sql'
+          )
+        </if>
+        <if test="query.cursor != null">
+          AND (
+            CASE WHEN e.entry_kind = 'FOLDER' THEN 0 ELSE 1 END
+              &gt; #{query.cursor.folderRank}
+            OR (
+              CASE WHEN e.entry_kind = 'FOLDER' THEN 0 ELSE 1 END
+                = #{query.cursor.folderRank}
+              AND
+              <choose>
+                <when test="query.sort == 'name-asc'">
+                  (
+                    e.name &gt; #{query.cursor.name}
+                    OR (e.name = #{query.cursor.name}
+                        AND e.id &gt; #{query.cursor.id})
+                  )
+                </when>
+                <when test="query.sort == 'size-desc'">
+                  (
+                    COALESCE(o.size_bytes, 0) &lt; #{query.cursor.size}
+                    OR (COALESCE(o.size_bytes, 0) = #{query.cursor.size}
+                        AND e.id &lt; #{query.cursor.id})
+                  )
+                </when>
+                <when test="query.sort == 'modified-asc'">
+                  (
+                    e.updated_at &gt; #{query.cursor.modifiedAt}
+                    OR (e.updated_at = #{query.cursor.modifiedAt}
+                        AND e.id &gt; #{query.cursor.id})
+                  )
+                </when>
+                <otherwise>
+                  (
+                    e.updated_at &lt; #{query.cursor.modifiedAt}
+                    OR (e.updated_at = #{query.cursor.modifiedAt}
+                        AND e.id &lt; #{query.cursor.id})
+                  )
+                </otherwise>
+              </choose>
+            )
+          )
+        </if>
+        ORDER BY
+          CASE WHEN e.entry_kind = 'FOLDER' THEN 0 ELSE 1 END,
+        <choose>
+          <when test="query.sort == 'name-asc'">
+            e.name ASC, e.id ASC
+          </when>
+          <when test="query.sort == 'size-desc'">
+            COALESCE(o.size_bytes, 0) DESC, e.id DESC
+          </when>
+          <when test="query.sort == 'modified-asc'">
+            e.updated_at ASC, e.id ASC
+          </when>
+          <otherwise>
+            e.updated_at DESC, e.id DESC
+          </otherwise>
+        </choose>
+        LIMIT #{query.limit}
+    </select>
+
+    <select id="findRecent" resultMap="fileEntryMap">
+        SELECT <include refid="entryColumns"/>
+        FROM file_entry e
+        <include refid="entryJoins"/>
+        WHERE e.owner_id = #{ownerId}
+          AND e.deleted_at IS NULL
+          AND e.entry_kind = 'FILE'
+        ORDER BY e.updated_at DESC, e.id DESC
+        LIMIT #{limit}
+    </select>
+
+    <select id="findStarred" resultMap="fileEntryMap">
+        SELECT <include refid="entryColumns"/>
+        FROM user_file_state starred_state
+        JOIN file_entry e
+          ON e.id = starred_state.entry_id
+         AND e.owner_id = starred_state.user_id
+        <include refid="entryJoins"/>
+        WHERE starred_state.user_id = #{ownerId}
+          AND starred_state.is_starred = 1
+          AND e.deleted_at IS NULL
+        ORDER BY e.updated_at DESC, e.id DESC
+    </select>
+
+    <select id="findAncestors" resultMap="fileEntryMap">
+        WITH RECURSIVE ancestor_chain AS (
+            SELECT id, parent_id, 0 AS depth
+            FROM file_entry
+            WHERE owner_id = #{ownerId} AND id = #{id}
+            UNION ALL
+            SELECT parent.id, parent.parent_id, child.depth + 1
+            FROM file_entry parent
+            JOIN ancestor_chain child ON parent.id = child.parent_id
+            WHERE parent.owner_id = #{ownerId}
+        )
+        SELECT <include refid="entryColumns"/>, chain.depth
+        FROM ancestor_chain chain
+        JOIN file_entry e ON e.id = chain.id
+        <include refid="entryJoins"/>
+        WHERE chain.parent_id IS NOT NULL
+        ORDER BY chain.depth DESC
+    </select>
+
+    <select id="findByIds" resultMap="fileEntryMap">
+        SELECT <include refid="entryColumns"/>
+        FROM file_entry e
+        <include refid="entryJoins"/>
+        WHERE e.owner_id = #{ownerId}
+          AND e.id IN
+        <foreach collection="ids" item="id" open="(" separator="," close=")">
+            #{id}
+        </foreach>
+    </select>
+
+    <select id="countChildren" resultType="long">
+        SELECT COUNT(*)
+        FROM file_entry
+        WHERE owner_id = #{ownerId}
+          AND parent_id = #{parentId}
+        <if test="!includeDeleted">
+          AND deleted_at IS NULL
+        </if>
+    </select>
+
+    <select id="countActiveChildByName" resultType="int">
+        SELECT COUNT(*)
+        FROM file_entry
+        WHERE owner_id = #{ownerId}
+          AND parent_id = #{parentId}
+          AND deleted_at IS NULL
+          AND name = #{name}
+    </select>
+
+    <select id="countChildrenBatch" resultMap="fileChildCountMap">
+        SELECT parent_id, COUNT(*) AS item_count
+        FROM file_entry
+        WHERE owner_id = #{ownerId}
+          AND parent_id IN
+        <foreach collection="parentIds" item="parentId"
+                 open="(" separator="," close=")">
+            #{parentId}
+        </foreach>
+        <if test="!includeDeleted">
+          AND deleted_at IS NULL
+        </if>
+        GROUP BY parent_id
+    </select>
+
+    <select id="storageStats" resultMap="fileStorageStatsMap">
+        SELECT
+          COALESCE(SUM(
+            CASE WHEN e.entry_kind = 'FILE' THEN o.size_bytes ELSE 0 END
+          ), 0) AS used_bytes,
+          COALESCE(SUM(e.entry_kind = 'FILE'), 0) AS file_count,
+          COALESCE(SUM(e.entry_kind = 'FOLDER'), 0) AS folder_count
+        FROM file_entry e
+        LEFT JOIN file_object o ON o.entry_id = e.id
+        WHERE e.owner_id = #{ownerId}
+          AND e.deleted_at IS NULL
+    </select>
+
+    <insert id="insertEntry">
+        INSERT INTO file_entry (
+            id, owner_id, parent_id, entry_kind, name
+        ) VALUES (
+            #{id}, #{ownerId}, #{parentId}, #{kind}, #{name}
+        )
+    </insert>
+
+    <insert id="insertObject">
+        INSERT INTO file_object (
+            entry_id, storage_bucket, storage_object_key, size_bytes, mime_type
+        ) VALUES (
+            #{id}, #{bucket}, #{objectKey}, #{size}, #{mimeType}
+        )
+    </insert>
+
+    <update id="rename">
+        UPDATE file_entry
+        SET name = #{name}, updated_at = CURRENT_TIMESTAMP(6)
+        WHERE id = #{id} AND owner_id = #{ownerId}
+    </update>
+
+    <insert id="setStarred">
+        INSERT INTO user_file_state (user_id, entry_id, is_starred)
+        VALUES (#{ownerId}, #{id}, #{starred})
+        ON DUPLICATE KEY UPDATE is_starred = #{starred}
+    </insert>
+
+    <update id="move">
+        UPDATE file_entry
+        SET parent_id = #{parentId}, updated_at = CURRENT_TIMESTAMP(6)
+        WHERE id = #{id} AND owner_id = #{ownerId}
+    </update>
+
+    <update id="softDelete">
+        UPDATE file_entry
+        SET deleted_at = #{deletedAt}, updated_at = CURRENT_TIMESTAMP(6)
+        WHERE id = #{id} AND owner_id = #{ownerId}
+    </update>
+
+    <update id="restore">
+        UPDATE file_entry
+        SET deleted_at = NULL, updated_at = CURRENT_TIMESTAMP(6)
+        WHERE id = #{id} AND owner_id = #{ownerId}
+    </update>
+
+    <delete id="deleteRows">
+        DELETE FROM file_entry
+        WHERE owner_id = #{ownerId}
+          AND id IN
+        <foreach collection="ids" item="id" open="(" separator="," close=")">
+            #{id}
+        </foreach>
+    </delete>
+
+</mapper>

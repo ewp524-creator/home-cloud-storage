@@ -1,0 +1,13 @@
+{
+  "name": "filehome-trueterminal",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "bin": {
+    "fhterm": "./bin/filehome-terminal.mjs"
+  },
+  "scripts": {
+    "cli": "node bin/filehome-terminal.mjs",
+    "test": "node --test cli/*.test.mjs"
+  }
+}

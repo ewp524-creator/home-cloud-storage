@@ -1,0 +1,177 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper
+    PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+    "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.filehome.auth.session.AuthSessionRepository">
+    <resultMap id="principalMap"
+               type="com.filehome.auth.session.AuthSessionAccountRow">
+        <constructor>
+            <arg column="session_id" javaType="java.util.UUID"
+                 typeHandler="com.filehome.persistence.UuidTypeHandler"/>
+            <arg column="session_expires_at" javaType="java.time.Instant"
+                 typeHandler="com.filehome.persistence.InstantTypeHandler"/>
+            <arg column="id" javaType="java.util.UUID"
+                 typeHandler="com.filehome.persistence.UuidTypeHandler"/>
+            <arg column="username" javaType="java.lang.String"/>
+            <arg column="email" javaType="java.lang.String"/>
+            <arg column="password_hash" javaType="java.lang.String"/>
+            <arg column="display_name" javaType="java.lang.String"/>
+            <arg column="avatar_url" javaType="java.lang.String"/>
+            <arg column="storage_quota_bytes" javaType="_long"/>
+            <arg column="is_enabled" javaType="_boolean"/>
+            <arg column="created_at" javaType="java.time.Instant"
+                 typeHandler="com.filehome.persistence.InstantTypeHandler"/>
+        </constructor>
+    </resultMap>
+
+    <resultMap id="sessionViewMap"
+               type="com.filehome.auth.session.AuthSessionView">
+        <constructor>
+            <arg column="id" javaType="java.util.UUID"
+                 typeHandler="com.filehome.persistence.UuidTypeHandler"/>
+            <arg column="user_agent" javaType="java.lang.String"/>
+            <arg column="created_at" javaType="java.time.Instant"
+                 typeHandler="com.filehome.persistence.InstantTypeHandler"/>
+            <arg column="last_seen_at" javaType="java.time.Instant"
+                 typeHandler="com.filehome.persistence.InstantTypeHandler"/>
+            <arg column="expires_at" javaType="java.time.Instant"
+                 typeHandler="com.filehome.persistence.InstantTypeHandler"/>
+            <arg column="is_current" javaType="_boolean"/>
+        </constructor>
+    </resultMap>
+
+    <resultMap id="sessionTokenMap"
+               type="com.filehome.auth.session.AuthSessionToken">
+        <constructor>
+            <arg column="id" javaType="java.util.UUID"
+                 typeHandler="com.filehome.persistence.UuidTypeHandler"/>
+            <arg column="user_id" javaType="java.util.UUID"
+                 typeHandler="com.filehome.persistence.UuidTypeHandler"/>
+            <arg column="token_hash" javaType="_byte[]"/>
+            <arg column="expires_at" javaType="java.time.Instant"
+                 typeHandler="com.filehome.persistence.InstantTypeHandler"/>
+        </constructor>
+    </resultMap>
+
+    <insert id="insert">
+        INSERT INTO auth_session (
+            id, user_id, token_hash, user_agent, created_ip_hash,
+            created_at, last_seen_at, expires_at
+        ) VALUES (
+            #{session.id}, #{session.userId}, #{session.tokenHash},
+            #{session.userAgent}, #{session.createdIpHash},
+            #{session.createdAt}, #{session.createdAt}, #{session.expiresAt}
+        )
+    </insert>
+
+    <select id="findActiveByTokenHash" resultMap="principalMap">
+        SELECT
+            session.id AS session_id,
+            session.expires_at AS session_expires_at,
+            account.id,
+            account.username,
+            account.email,
+            account.password_hash,
+            account.display_name,
+            account.avatar_url,
+            account.storage_quota_bytes,
+            account.is_enabled,
+            account.created_at
+        FROM auth_session session
+        INNER JOIN user_account account ON account.id = session.user_id
+        WHERE session.token_hash = #{tokenHash}
+          AND session.revoked_at IS NULL
+          AND session.expires_at > CURRENT_TIMESTAMP(6)
+          AND account.is_enabled = 1
+        LIMIT 1
+    </select>
+
+    <update id="revokeByTokenHash">
+        UPDATE auth_session
+        SET revoked_at = CURRENT_TIMESTAMP(6)
+        WHERE token_hash = #{tokenHash}
+          AND revoked_at IS NULL
+    </update>
+
+    <update id="touchIfStale">
+        UPDATE auth_session
+        SET last_seen_at = CURRENT_TIMESTAMP(6)
+        WHERE id = #{id}
+          AND revoked_at IS NULL
+          AND last_seen_at &lt; DATE_SUB(CURRENT_TIMESTAMP(6), INTERVAL 5 MINUTE)
+    </update>
+
+    <update id="revokeByIdAndUser">
+        UPDATE auth_session
+        SET revoked_at = CURRENT_TIMESTAMP(6)
+        WHERE id = #{id}
+          AND user_id = #{userId}
+          AND revoked_at IS NULL
+    </update>
+
+    <select id="findActiveTokenByIdAndUser" resultMap="sessionTokenMap">
+        SELECT id, user_id, token_hash, expires_at
+        FROM auth_session
+        WHERE id = #{id}
+          AND user_id = #{userId}
+          AND revoked_at IS NULL
+          AND expires_at > CURRENT_TIMESTAMP(6)
+        LIMIT 1
+    </select>
+
+    <update id="revokeOthers">
+        UPDATE auth_session
+        SET revoked_at = CURRENT_TIMESTAMP(6)
+        WHERE user_id = #{userId}
+          AND id &lt;&gt; #{currentSessionId}
+          AND revoked_at IS NULL
+    </update>
+
+    <update id="revokeAllByUser">
+        UPDATE auth_session
+        SET revoked_at = CURRENT_TIMESTAMP(6)
+        WHERE user_id = #{userId}
+          AND revoked_at IS NULL
+    </update>
+
+    <select id="findActiveTokensByUserExcept" resultMap="sessionTokenMap">
+        SELECT id, user_id, token_hash, expires_at
+        FROM auth_session
+        WHERE user_id = #{userId}
+          AND id &lt;&gt; #{currentSessionId}
+          AND revoked_at IS NULL
+          AND expires_at > CURRENT_TIMESTAMP(6)
+    </select>
+
+    <select id="findActiveTokensByUser" resultMap="sessionTokenMap">
+        SELECT id, user_id, token_hash, expires_at
+        FROM auth_session
+        WHERE user_id = #{userId}
+          AND revoked_at IS NULL
+          AND expires_at > CURRENT_TIMESTAMP(6)
+    </select>
+
+    <select id="listActive" resultMap="sessionViewMap">
+        SELECT
+            id,
+            user_agent,
+            created_at,
+            last_seen_at,
+            expires_at,
+            (id = #{currentSessionId}) AS is_current
+        FROM auth_session
+        WHERE user_id = #{userId}
+          AND revoked_at IS NULL
+          AND expires_at > CURRENT_TIMESTAMP(6)
+        ORDER BY last_seen_at DESC, created_at DESC
+    </select>
+
+    <delete id="deleteExpired">
+        DELETE FROM auth_session
+        WHERE expires_at &lt; CURRENT_TIMESTAMP(6)
+           OR revoked_at &lt; DATE_SUB(CURRENT_TIMESTAMP(6), INTERVAL 7 DAY)
+        ORDER BY expires_at
+        LIMIT #{limit}
+    </delete>
+</mapper>
