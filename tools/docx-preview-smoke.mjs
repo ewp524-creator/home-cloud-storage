@@ -10,18 +10,17 @@ if (!account || !password || !fileName) {
 }
 
 async function main() {
-  const login = await fetch(`${baseUrl}/api/v1/auth/login`, {
+  const login = await fetch(`${baseUrl}/api/v1/auth/cli/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ account, password }),
   })
   if (!login.ok) throw new Error(await login.text())
-  const cookies = login.headers.getSetCookie()
-    .map((value) => value.split(';', 1)[0])
-    .join('; ')
+  const { accessToken } = await login.json()
+  const headers = { Authorization: `Bearer ${accessToken}` }
   const list = await fetch(
     `${baseUrl}/api/v1/files?q=${encodeURIComponent(fileName)}&limit=10`,
-    { headers: { Cookie: cookies } },
+    { headers },
   )
   if (!list.ok) throw new Error(await list.text())
   const files = await list.json()
@@ -29,12 +28,12 @@ async function main() {
   if (!file) throw new Error(`File not found: ${fileName}`)
   const access = await fetch(
     `${baseUrl}/api/v1/files/${file.id}/preview-access`,
-    { headers: { Cookie: cookies } },
+    { headers },
   )
   if (!access.ok) throw new Error(await access.text())
   const preview = await access.json()
   const media = await fetch(new URL(preview.url, baseUrl), {
-    headers: { Cookie: cookies },
+    headers,
   })
   if (!media.ok) throw new Error(await media.text())
   const bytes = new Uint8Array(await media.arrayBuffer())
@@ -47,17 +46,6 @@ async function main() {
     zipMagic: bytes[0] === 0x50 && bytes[1] === 0x4b,
     expiresAt: preview.expiresAt,
   }
-  await fetch(`${baseUrl}/api/v1/auth/logout`, {
-    method: 'POST',
-    headers: {
-      Cookie: cookies,
-      'X-CSRF-Token': login.headers
-        .getSetCookie()
-        .find((value) => value.startsWith('FH_CSRF='))
-        .split(';', 1)[0]
-        .slice('FH_CSRF='.length),
-    },
-  })
   process.stdout.write(`${JSON.stringify(result)}\n`)
 }
 

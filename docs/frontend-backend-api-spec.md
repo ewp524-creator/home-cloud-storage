@@ -170,8 +170,9 @@
 
 | 方法 | 路径 | 用途 | 主要请求 | 主要响应 |
 |---|---|---|---|---|
-| POST | `/api/v1/auth/register` | 注册 | `username`, `email`, `password`, `displayName` | `userId` |
-| POST | `/api/v1/auth/login` | 登录 | `account`, `password` | `accessToken`, `refreshToken`, `user` |
+| GET | `/api/v1/auth/captcha` | 获取一次性图形验证码 | 无 | `captchaId`, `image`, `expiresAt` |
+| POST | `/api/v1/auth/register` | 注册 | `username`, `email`, `password`, `displayName`, `captchaId`, `captchaAnswer` | 当前用户 |
+| POST | `/api/v1/auth/login` | 登录 | `account`, `password`, `captchaId`, `captchaAnswer` | 当前用户，浏览器会话 Cookie |
 | POST | `/api/v1/auth/refresh` | 刷新 Token | `refreshToken` | 新 Token |
 | POST | `/api/v1/auth/logout` | 退出 | 无 | `204` |
 | GET | `/api/v1/users/me` | 当前用户 | 无 | 用户资料 |

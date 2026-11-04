@@ -6,6 +6,7 @@ import java.util.Locale;
 import java.util.UUID;
 
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.CacheControl;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -38,21 +39,37 @@ public class AuthController {
     private final AuthSessionService sessionService;
     private final RequestRateLimiter rateLimiter;
     private final ClientAddressResolver addressResolver;
+    private final CaptchaService captchaService;
 
     public AuthController(
             AuthService authService,
             AuthSessionService sessionService,
             RequestRateLimiter rateLimiter,
-            ClientAddressResolver addressResolver) {
+            ClientAddressResolver addressResolver,
+            CaptchaService captchaService) {
         this.authService = authService;
         this.sessionService = sessionService;
         this.rateLimiter = rateLimiter;
         this.addressResolver = addressResolver;
+        this.captchaService = captchaService;
+    }
+
+    @GetMapping("/captcha")
+    public ResponseEntity<CaptchaService.Challenge> captcha(
+            HttpServletRequest servletRequest) {
+        String address = addressResolver.resolve(servletRequest);
+        rateLimiter.check(
+                "captcha:" + address,
+                30,
+                Duration.ofMinutes(1));
+        return ResponseEntity.ok()
+                .cacheControl(CacheControl.noStore())
+                .body(captchaService.issue());
     }
 
     @PostMapping("/login")
     public BrowserAuthResponse login(
-            @Valid @RequestBody LoginRequest request,
+            @Valid @RequestBody BrowserLoginRequest request,
             HttpServletRequest servletRequest,
             HttpServletResponse servletResponse) {
         String address = addressResolver.resolve(servletRequest);
@@ -61,6 +78,7 @@ public class AuthController {
                         + request.account().trim().toLowerCase(Locale.ROOT),
                 10,
                 Duration.ofMinutes(5));
+        captchaService.verify(request.captchaId(), request.captchaAnswer());
         UserAccount user = authService.authenticate(
                 request.account(),
                 request.password());
@@ -72,7 +90,7 @@ public class AuthController {
 
     @PostMapping("/cli/login")
     public AuthService.AuthResponse cliLogin(
-            @Valid @RequestBody LoginRequest request,
+            @Valid @RequestBody CliLoginRequest request,
             HttpServletRequest servletRequest) {
         String address = addressResolver.resolve(servletRequest);
         rateLimiter.check(
@@ -87,13 +105,14 @@ public class AuthController {
 
     @PostMapping("/register")
     public BrowserAuthResponse register(
-            @Valid @RequestBody RegisterRequest request,
+            @Valid @RequestBody BrowserRegisterRequest request,
             HttpServletRequest servletRequest,
             HttpServletResponse servletResponse) {
         rateLimiter.check(
                 "register:" + addressResolver.resolve(servletRequest),
                 5,
                 Duration.ofHours(1));
+        captchaService.verify(request.captchaId(), request.captchaAnswer());
         UserAccount user = authService.register(
                 request.username(),
                 request.email(),
@@ -158,15 +177,24 @@ public class AuthController {
     public record BrowserAuthResponse(UserView user) {
     }
 
-    public record LoginRequest(
+    public record BrowserLoginRequest(
+            @NotBlank @Size(max = 254) String account,
+            @NotBlank @Size(min = 8, max = 128) String password,
+            @NotBlank @Size(max = 64) String captchaId,
+            @NotBlank @Size(max = 12) String captchaAnswer) {
+    }
+
+    public record CliLoginRequest(
             @NotBlank @Size(max = 254) String account,
             @NotBlank @Size(min = 8, max = 128) String password) {
     }
 
-    public record RegisterRequest(
+    public record BrowserRegisterRequest(
             @NotBlank @Size(min = 2, max = 32) String username,
             @NotBlank @Email @Size(max = 254) String email,
             @NotBlank @Size(min = 8, max = 128) String password,
-            @Size(max = 80) String displayName) {
+            @Size(max = 80) String displayName,
+            @NotBlank @Size(max = 64) String captchaId,
+            @NotBlank @Size(max = 12) String captchaAnswer) {
     }
 }

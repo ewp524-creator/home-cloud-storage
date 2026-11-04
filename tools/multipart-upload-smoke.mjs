@@ -13,16 +13,9 @@ function sha256(value) {
   return createHash('sha256').update(value).digest('hex')
 }
 
-function cookieHeader(setCookies) {
-  return setCookies.map((value) => value.split(';', 1)[0]).join('; ')
-}
-
-async function jsonRequest(path, options, cookies, csrf) {
+async function jsonRequest(path, options, accessToken) {
   const headers = new Headers(options.headers || {})
-  headers.set('Cookie', cookies)
-  if (csrf && !['GET', 'HEAD'].includes(options.method || 'GET')) {
-    headers.set('X-CSRF-Token', csrf)
-  }
+  headers.set('Authorization', `Bearer ${accessToken}`)
   if (options.json !== undefined) {
     headers.set('Content-Type', 'application/json')
   }
@@ -41,18 +34,13 @@ async function jsonRequest(path, options, cookies, csrf) {
 }
 
 async function main() {
-  const login = await fetch(`${baseUrl}/api/v1/auth/login`, {
+  const login = await fetch(`${baseUrl}/api/v1/auth/cli/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ account, password }),
   })
   if (!login.ok) throw new Error(`Login failed: ${await login.text()}`)
-  const setCookies = login.headers.getSetCookie()
-  const cookies = cookieHeader(setCookies)
-  const csrf = setCookies
-    .find((value) => value.startsWith('FH_CSRF='))
-    .split(';', 1)[0]
-    .slice('FH_CSRF='.length)
+  const { accessToken } = await login.json()
 
   const content = randomBytes(size)
   const fingerprint = sha256(
@@ -70,8 +58,7 @@ async function main() {
         clientFingerprint: fingerprint,
       },
     },
-    cookies,
-    csrf,
+    accessToken,
   )
 
   let file
@@ -84,8 +71,7 @@ async function main() {
       {
         method: 'PUT',
         headers: {
-          Cookie: cookies,
-          'X-CSRF-Token': csrf,
+          Authorization: `Bearer ${accessToken}`,
           'X-Chunk-SHA256': '0'.repeat(64),
           'Content-Type': 'application/octet-stream',
         },
@@ -101,8 +87,7 @@ async function main() {
       {
         method: 'PUT',
         headers: {
-          Cookie: cookies,
-          'X-CSRF-Token': csrf,
+          Authorization: `Bearer ${accessToken}`,
           'X-Chunk-SHA256': sha256(firstChunk),
           'Content-Type': 'application/octet-stream',
         },
@@ -115,8 +100,7 @@ async function main() {
     const resumed = await jsonRequest(
       `/api/v1/uploads/${session.id}`,
       { method: 'GET' },
-      cookies,
-      csrf,
+      accessToken,
     )
     if (
       resumed.uploadedParts.length !== 1 ||
@@ -141,8 +125,7 @@ async function main() {
             {
               method: 'PUT',
               headers: {
-                Cookie: cookies,
-                'X-CSRF-Token': csrf,
+                Authorization: `Bearer ${accessToken}`,
                 'X-Chunk-SHA256': sha256(chunk),
                 'Content-Type': 'application/octet-stream',
               },
@@ -159,14 +142,13 @@ async function main() {
     const completed = await jsonRequest(
       `/api/v1/uploads/${session.id}/complete`,
       { method: 'POST' },
-      cookies,
-      csrf,
+      accessToken,
     )
     const uploadSeconds = (performance.now() - uploadStartedAt) / 1000
     file = completed.file
     const download = await fetch(
       `${baseUrl}/api/v1/files/${file.id}/download`,
-      { headers: { Cookie: cookies } },
+      { headers: { Authorization: `Bearer ${accessToken}` } },
     )
     if (!download.ok) throw new Error(`Download: ${await download.text()}`)
     const downloaded = Buffer.from(await download.arrayBuffer())
@@ -192,19 +174,14 @@ async function main() {
       await jsonRequest(
         `/api/v1/files/${file.id}/permanent`,
         { method: 'DELETE' },
-        cookies,
-        csrf,
+        accessToken,
       )
     } else {
       await fetch(`${baseUrl}/api/v1/uploads/${session.id}`, {
         method: 'DELETE',
-        headers: { Cookie: cookies, 'X-CSRF-Token': csrf },
+        headers: { Authorization: `Bearer ${accessToken}` },
       })
     }
-    await fetch(`${baseUrl}/api/v1/auth/logout`, {
-      method: 'POST',
-      headers: { Cookie: cookies, 'X-CSRF-Token': csrf },
-    })
   }
 }
 

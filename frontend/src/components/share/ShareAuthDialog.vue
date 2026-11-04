@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import {
   Check,
   Eye,
@@ -10,6 +10,7 @@ import {
   UserRound,
 } from '@lucide/vue'
 import { useFileManagerContext } from '../../composables/fileManagerContext'
+import GraphicalCaptcha from '../auth/GraphicalCaptcha.vue'
 import AppModal from '../overlays/AppModal.vue'
 
 const props = defineProps({
@@ -32,6 +33,9 @@ const name = ref('')
 const username = ref('')
 const email = ref('')
 const password = ref('')
+const captchaId = ref('')
+const captchaAnswer = ref('')
+const captchaRef = ref(null)
 const showPassword = ref(false)
 const submitting = ref(false)
 const errorMessage = ref('')
@@ -40,13 +44,31 @@ const title = computed(() =>
   mode.value === 'login' ? '登录后下载' : '注册后下载',
 )
 
+function clearSensitiveFields() {
+  account.value = ''
+  name.value = ''
+  username.value = ''
+  email.value = ''
+  password.value = ''
+  captchaAnswer.value = ''
+}
+
+function switchMode(nextMode) {
+  mode.value = nextMode
+  clearSensitiveFields()
+  showPassword.value = false
+  captchaRef.value?.refresh()
+}
+
 watch(
   () => props.open,
-  (open) => {
+  async (open) => {
     if (!open) return
-    mode.value = 'login'
+    switchMode('login')
     submitting.value = false
     showPassword.value = false
+    await nextTick()
+    clearSensitiveFields()
   },
 )
 
@@ -62,13 +84,21 @@ async function submit() {
         displayName: name.value,
         email: email.value,
         password: password.value,
+        captchaId: captchaId.value,
+        captchaAnswer: captchaAnswer.value,
       })
     } else {
-      await login({ account: account.value, password: password.value })
+      await login({
+        account: account.value,
+        password: password.value,
+        captchaId: captchaId.value,
+        captchaAnswer: captchaAnswer.value,
+      })
     }
     emit('success')
   } catch (error) {
     errorMessage.value = error.message || '认证失败'
+    await captchaRef.value?.refresh()
   } finally {
     submitting.value = false
   }
@@ -88,40 +118,60 @@ async function submit() {
         <button
           type="button"
           :class="{ 'is-active': mode === 'login' }"
-          @click="mode = 'login'"
+          @click="switchMode('login')"
         >
           登录
         </button>
         <button
           type="button"
           :class="{ 'is-active': mode === 'register' }"
-          @click="mode = 'register'"
+          @click="switchMode('register')"
         >
           注册
         </button>
       </div>
 
-      <form class="share-auth__form" @submit.prevent="submit">
+      <form class="share-auth__form" autocomplete="off" @submit.prevent="submit">
         <template v-if="mode === 'register'">
           <label>
             <span>用户名</span>
             <div class="share-auth__input">
               <UserRound :size="16" />
-              <input v-model="username" type="text" placeholder="用于创建个人根目录" minlength="2" maxlength="32" required />
+              <input
+                v-model="username"
+                type="text"
+                autocomplete="off"
+                placeholder="用于创建个人根目录"
+                minlength="2"
+                maxlength="32"
+                required
+              />
             </div>
           </label>
           <label>
             <span>姓名</span>
             <div class="share-auth__input">
               <UserRound :size="16" />
-              <input v-model="name" type="text" placeholder="你的姓名" required />
+              <input
+                v-model="name"
+                type="text"
+                autocomplete="off"
+                placeholder="你的姓名"
+                required
+              />
             </div>
           </label>
           <label>
             <span>邮箱</span>
             <div class="share-auth__input">
               <Mail :size="16" />
-              <input v-model="email" type="email" placeholder="name@example.com" required />
+              <input
+                v-model="email"
+                type="email"
+                autocomplete="off"
+                placeholder="name@example.com"
+                required
+              />
             </div>
           </label>
         </template>
@@ -129,7 +179,13 @@ async function submit() {
           <span>账户</span>
           <div class="share-auth__input">
             <UserRound :size="16" />
-            <input v-model="account" type="text" placeholder="用户名或邮箱" required />
+            <input
+              v-model="account"
+              type="text"
+              autocomplete="off"
+              placeholder="用户名或邮箱"
+              required
+            />
           </div>
         </label>
 
@@ -140,6 +196,7 @@ async function submit() {
             <input
               v-model="password"
               :type="showPassword ? 'text' : 'password'"
+              autocomplete="off"
               placeholder="输入密码"
               minlength="6"
               required
@@ -160,6 +217,15 @@ async function submit() {
           注册即表示同意服务条款和隐私政策
         </div>
 
+        <div class="share-auth__captcha">
+          <span>图形验证码</span>
+          <GraphicalCaptcha
+            ref="captchaRef"
+            v-model="captchaAnswer"
+            v-model:captcha-id="captchaId"
+          />
+        </div>
+
         <p v-if="errorMessage" class="share-auth__error">{{ errorMessage }}</p>
 
         <button class="share-auth__submit" type="submit" :disabled="submitting">
@@ -169,7 +235,7 @@ async function submit() {
       </form>
 
       <p class="share-auth__hint">
-        演示账户已预填。正式环境将通过后端完成账户认证。
+        验证码一次性有效，提交后会立即作废。
       </p>
     </div>
   </AppModal>
@@ -267,6 +333,18 @@ async function submit() {
   background: transparent;
   color: var(--text-quiet);
   cursor: pointer;
+}
+
+.share-auth__captcha {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.share-auth__captcha > span {
+  color: var(--text-soft);
+  font-size: 9.5px;
+  font-weight: 600;
 }
 
 .share-auth__terms {

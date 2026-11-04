@@ -6,6 +6,14 @@ const username = `phase4${suffix}`
 const email = `${username}@example.com`
 const initialPassword = `T-${randomBytes(18).toString('base64url')}`
 const newPassword = `N-${randomBytes(18).toString('base64url')}`
+const captchaId = process.env.FILEHOME_CAPTCHA_ID
+const captchaAnswer = process.env.FILEHOME_CAPTCHA_ANSWER
+
+if (!captchaId || !captchaAnswer) {
+  throw new Error(
+    'Open the captcha endpoint and set FILEHOME_CAPTCHA_ID and FILEHOME_CAPTCHA_ANSWER.',
+  )
+}
 
 async function request(path, options, cookies = '', csrf = '') {
   const headers = new Headers(options.headers || {})
@@ -34,6 +42,8 @@ async function main() {
       email,
       password: initialPassword,
       displayName: 'Phase Four Test',
+      captchaId,
+      captchaAnswer,
     },
   })
   if (!registration.ok) throw new Error(await registration.text())
@@ -113,7 +123,7 @@ async function main() {
   )
   if (!deactivation.ok) throw new Error(await deactivation.text())
 
-  const loginAfterDeactivation = await request('/api/v1/auth/login', {
+  const loginAfterDeactivation = await request('/api/v1/auth/cli/login', {
     method: 'POST',
     json: { account: username, password: newPassword },
   })

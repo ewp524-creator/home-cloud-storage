@@ -7,22 +7,15 @@ if (!account || !password) {
 }
 
 async function main() {
-  const login = await fetch(`${baseUrl}/api/v1/auth/login`, {
+  const login = await fetch(`${baseUrl}/api/v1/auth/cli/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ account, password }),
   })
   if (!login.ok) throw new Error(await login.text())
-  const cookies = login.headers.getSetCookie()
-    .map((value) => value.split(';', 1)[0])
-    .join('; ')
-  const csrf = login.headers.getSetCookie()
-    .find((value) => value.startsWith('FH_CSRF='))
-    .split(';', 1)[0]
-    .slice('FH_CSRF='.length)
+  const { accessToken } = await login.json()
   const headers = {
-    Cookie: cookies,
-    'X-CSRF-Token': csrf,
+    Authorization: `Bearer ${accessToken}`,
     'Content-Type': 'application/json',
   }
   const name = `kafka-audit-${Date.now()}`
@@ -39,10 +32,6 @@ async function main() {
   )
   if (!deleted.ok) throw new Error(await deleted.text())
   await new Promise((resolve) => globalThis.setTimeout(resolve, 1500))
-  await fetch(`${baseUrl}/api/v1/auth/logout`, {
-    method: 'POST',
-    headers: { Cookie: cookies, 'X-CSRF-Token': csrf },
-  })
   process.stdout.write(
     `${JSON.stringify({ folderId: created.id, name })}\n`,
   )

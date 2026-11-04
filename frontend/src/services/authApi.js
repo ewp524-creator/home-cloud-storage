@@ -7,6 +7,10 @@ export function login(payload) {
   })
 }
 
+export function captcha() {
+  return apiRequest('/auth/captcha')
+}
+
 export function register(payload) {
   return apiRequest('/auth/register', {
     method: 'POST',

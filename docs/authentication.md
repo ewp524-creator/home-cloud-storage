@@ -15,19 +15,21 @@ preserving the existing command-line workflow.
 
 ## Browser Session Flow
 
-1. `POST /api/v1/auth/login` verifies the password and creates an
+1. `GET /api/v1/auth/captcha` returns a one-time image challenge and captcha ID.
+   The answer is stored in Redis for two minutes and is never returned.
+2. `POST /api/v1/auth/login` verifies the captcha, then verifies the password and creates an
    `auth_session` row.
-2. The response sets `FH_SESSION` as `HttpOnly` and `FH_CSRF` as a
+3. The response sets `FH_SESSION` as `HttpOnly` and `FH_CSRF` as a
    JavaScript-readable CSRF cookie. Both use `SameSite=Lax`, `Path=/`, and the
    configured `Secure` flag.
-3. The database stores only the SHA-256 hash of the random session token.
-4. Authenticated requests validate the session hash, expiry, revocation state,
+4. The database stores only the SHA-256 hash of the random session token.
+5. Authenticated requests validate the session hash, expiry, revocation state,
    and account status through Redis. A cache miss falls back to one indexed
    MySQL query.
-5. Requests using cookie authentication and a non-safe HTTP method must send
+6. Requests using cookie authentication and a non-safe HTTP method must send
    `X-CSRF-Token`. The server derives the expected value with HMAC-SHA-256 from
    the session token and a domain-separated signing key.
-6. `POST /api/v1/auth/logout` revokes the current database session immediately
+7. `POST /api/v1/auth/logout` revokes the current database session immediately
    and expires both cookies.
 
 Expired and long-revoked sessions are removed by a scheduled cleanup job.
@@ -38,6 +40,7 @@ immediate even if a concurrent request repopulates the session cache.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
+| `GET` | `/api/v1/auth/captcha` | Issue a two-minute, one-time graphical captcha |
 | `GET` | `/api/v1/auth/session` | Restore the current browser session |
 | `POST` | `/api/v1/auth/logout` | Revoke the current session |
 | `GET` | `/api/v1/auth/sessions` | List active sessions |
@@ -63,6 +66,8 @@ Local HTTP development must use `false`.
 
 - `AuthController` handles HTTP contracts and rate limits.
 - `AuthService` owns password authentication and CLI token issuance.
+- `CaptchaService` owns image generation, one-time challenge storage, and
+  constant-time answer comparison.
 - `AuthSessionService` owns session lifecycle and revocation.
 - `SessionResolutionCache` owns the Redis session adapter and revocation
   markers.

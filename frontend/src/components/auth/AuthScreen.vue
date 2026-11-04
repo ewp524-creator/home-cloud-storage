@@ -1,8 +1,7 @@
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, nextTick, onMounted, ref } from 'vue'
 import {
   ArrowRight,
-  Check,
   Cloud,
   Eye,
   EyeOff,
@@ -14,6 +13,7 @@ import {
   UserRound,
 } from '@lucide/vue'
 import { useFileManagerContext } from '../../composables/fileManagerContext'
+import GraphicalCaptcha from './GraphicalCaptcha.vue'
 
 const { login, registerAccount } = useFileManagerContext()
 
@@ -24,15 +24,28 @@ const password = ref('')
 const name = ref('')
 const username = ref('')
 const email = ref('')
-const remember = ref(true)
+const captchaId = ref('')
+const captchaAnswer = ref('')
+const captchaRef = ref(null)
 const submitting = ref(false)
 const notice = ref('')
 
 const submitLabel = computed(() => (mode.value === 'login' ? '进入工作台' : '创建账户'))
 
+function clearSensitiveFields() {
+  account.value = ''
+  password.value = ''
+  name.value = ''
+  username.value = ''
+  email.value = ''
+  captchaAnswer.value = ''
+}
+
 function switchMode(nextMode) {
   mode.value = nextMode
   showPassword.value = false
+  clearSensitiveFields()
+  captchaRef.value?.refresh()
 }
 
 async function submit() {
@@ -47,12 +60,20 @@ async function submit() {
         displayName: name.value,
         email: email.value,
         password: password.value,
+        captchaId: captchaId.value,
+        captchaAnswer: captchaAnswer.value,
       })
     } else {
-      await login({ account: account.value, password: password.value })
+      await login({
+        account: account.value,
+        password: password.value,
+        captchaId: captchaId.value,
+        captchaAnswer: captchaAnswer.value,
+      })
     }
   } catch (error) {
     notice.value = error.message || '登录失败'
+    await captchaRef.value?.refresh()
   } finally {
     submitting.value = false
   }
@@ -60,8 +81,13 @@ async function submit() {
 
 function requestReset() {
   notice.value =
-    '演示环境不会发送邮件，正式接入后可在此完成密码重置。'
+    '密码重置功能尚未接入，请联系管理员处理。'
 }
+
+onMounted(async () => {
+  await nextTick()
+  clearSensitiveFields()
+})
 </script>
 
 <template>
@@ -133,7 +159,7 @@ function requestReset() {
           </button>
         </div>
 
-        <form class="auth-form" @submit.prevent="submit">
+        <form class="auth-form" autocomplete="off" @submit.prevent="submit">
           <template v-if="mode === 'register'">
             <label>
               <span>用户名</span>
@@ -142,6 +168,7 @@ function requestReset() {
                 <input
                   v-model="username"
                   type="text"
+                  autocomplete="off"
                   placeholder="用于创建个人根目录"
                   minlength="2"
                   maxlength="32"
@@ -153,14 +180,26 @@ function requestReset() {
               <span>姓名</span>
               <div class="auth-input">
                 <UserRound :size="16" />
-                <input v-model="name" type="text" placeholder="你的姓名" required />
+                <input
+                  v-model="name"
+                  type="text"
+                  autocomplete="off"
+                  placeholder="你的姓名"
+                  required
+                />
               </div>
             </label>
             <label>
               <span>邮箱</span>
               <div class="auth-input">
                 <Mail :size="16" />
-                <input v-model="email" type="email" placeholder="name@example.com" required />
+                <input
+                  v-model="email"
+                  type="email"
+                  autocomplete="off"
+                  placeholder="name@example.com"
+                  required
+                />
               </div>
             </label>
           </template>
@@ -168,7 +207,13 @@ function requestReset() {
             <span>账户</span>
             <div class="auth-input">
               <UserRound :size="16" />
-              <input v-model="account" type="text" placeholder="用户名或邮箱" required />
+              <input
+                v-model="account"
+                type="text"
+                autocomplete="off"
+                placeholder="用户名或邮箱"
+                required
+              />
             </div>
           </label>
 
@@ -179,6 +224,7 @@ function requestReset() {
               <input
                 v-model="password"
                 :type="showPassword ? 'text' : 'password'"
+                autocomplete="off"
                 placeholder="输入密码"
                 minlength="6"
                 required
@@ -195,12 +241,16 @@ function requestReset() {
             </div>
           </label>
 
-          <div v-if="mode === 'login'" class="auth-options">
-            <label class="check-label">
-              <input v-model="remember" type="checkbox" />
-              <span><Check :size="11" /></span>
-              记住我
-            </label>
+          <div class="auth-captcha-group">
+            <span>图形验证码</span>
+            <GraphicalCaptcha
+              ref="captchaRef"
+              v-model="captchaAnswer"
+              v-model:captcha-id="captchaId"
+            />
+          </div>
+
+          <div v-if="mode === 'login'" class="auth-options auth-options--end">
             <button type="button" @click="requestReset">忘记密码？</button>
           </div>
 
@@ -210,8 +260,8 @@ function requestReset() {
           </button>
         </form>
 
-        <p class="auth-demo">
-          演示账户已预填，可直接进入查看界面与交互。
+        <p class="auth-security-note">
+          图形验证码一次性有效，提交后会立即作废。
         </p>
         <p v-if="notice" class="auth-notice">{{ notice }}</p>
       </div>
@@ -560,40 +610,25 @@ function requestReset() {
   cursor: pointer;
 }
 
+.auth-captcha-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.auth-captcha-group > span {
+  color: var(--text-soft);
+  font-size: 9.5px;
+  font-weight: 630;
+}
+
 .auth-options {
   display: flex;
   align-items: center;
-  justify-content: space-between;
 }
 
-.check-label {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--text-soft);
-  font-size: 9.5px;
-  cursor: pointer;
-}
-
-.check-label input {
-  position: absolute;
-  opacity: 0;
-}
-
-.check-label span {
-  display: grid;
-  width: 16px;
-  height: 16px;
-  place-items: center;
-  border: 1px solid var(--line-strong);
-  border-radius: 4px;
-  color: transparent;
-}
-
-.check-label input:checked + span {
-  border-color: var(--accent);
-  background: var(--accent);
-  color: #fff;
+.auth-options--end {
+  justify-content: flex-end;
 }
 
 .auth-options > button {
@@ -633,7 +668,7 @@ function requestReset() {
   opacity: 0.75;
 }
 
-.auth-demo {
+.auth-security-note {
   margin: 20px 0 0;
   color: var(--text-quiet);
   font-size: 8.5px;
