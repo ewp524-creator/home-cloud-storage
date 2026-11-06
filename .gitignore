@@ -17,3 +17,4 @@ data/
 .env
 *.bundle
 filehome.env.ps1
+release/
