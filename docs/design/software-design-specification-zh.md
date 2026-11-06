@@ -553,6 +553,104 @@ classDiagram
         +UploadStatus status
         +Instant expiresAt
     }
+classDiagram
+    direction LR
+
+    class UserAccount {
+        +UUID id
+        +String username
+        +String email
+        +String passwordHash
+        +String displayName
+        +String avatarUrl
+        +long storageQuotaBytes
+        +boolean enabled
+        +Instant createdAt
+    }
+
+    class UserPreference {
+        +UUID userId
+        +String defaultView
+        +String defaultSort
+        +boolean reduceMotion
+        +int uploadConcurrency
+    }
+
+    class FileEntry {
+        +UUID id
+        +UUID ownerId
+        +UUID parentId
+        +EntryKind kind
+        +String name
+        +Instant createdAt
+        +Instant updatedAt
+        +Instant deletedAt
+    }
+
+    class FileObject {
+        +UUID entryId
+        +String bucket
+        +String objectKey
+        +long sizeBytes
+        +String mimeType
+        +byte[] checksumSha256
+    }
+
+    class Tag {
+        +UUID id
+        +UUID ownerId
+        +String name
+        +String color
+    }
+
+    class FileTag {
+        +UUID entryId
+        +UUID tagId
+    }
+
+    class UserFileState {
+        +UUID userId
+        +UUID entryId
+        +boolean starred
+        +Instant lastAccessedAt
+    }
+
+    class ShareLink {
+        +UUID id
+        +UUID ownerId
+        +UUID rootEntryId
+        +byte[] tokenHash
+        +String accessCodeHash
+        +Permission permission
+        +boolean recursive
+        +Instant expiresAt
+        +Instant revokedAt
+    }
+
+    class AuthSession {
+        +UUID id
+        +UUID userId
+        +byte[] tokenHash
+        +Instant expiresAt
+        +Instant revokedAt
+    }
+
+    class UploadSession {
+        +UUID id
+        +UUID ownerId
+        +UUID targetEntryId
+        +UUID parentId
+        +String fileName
+        +String mimeType
+        +String clientFingerprint
+        +long sizeBytes
+        +long partSizeBytes
+        +int totalParts
+        +String storageObjectKey
+        +String minioUploadId
+        +UploadStatus status
+        +Instant expiresAt
+    }
 
     class UploadPart {
         +UUID uploadSessionId
