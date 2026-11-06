@@ -14,7 +14,7 @@ RUN apt-get update \
     && useradd --system --gid filehome --home-dir /app filehome
 
 WORKDIR /app
-COPY --from=build /workspace/target/filehome-backend-0.0.1-SNAPSHOT.jar /app/filehome-backend.jar
+COPY --from=build /workspace/target/filehome-backend-*.jar /app/filehome-backend.jar
 RUN mkdir -p /app/logs && chown -R filehome:filehome /app
 
 USER filehome
